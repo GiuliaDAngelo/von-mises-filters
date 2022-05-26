@@ -1,5 +1,5 @@
 # von-mises-filters
-This is a prototype network that uses van Mises filters
+This is a prototype network that uses von Mises filters
 
 
 ## install dependencies
