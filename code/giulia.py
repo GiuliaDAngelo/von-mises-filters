@@ -12,11 +12,11 @@ from bimvee.importIitYarp import importIitYarp
 from bimvee.importProph import importProph
 from torchvision.transforms import InterpolationMode
 from skimage.transform import rescale, resize, downscale_local_mean
+import cv2
 
 
 
-
-def run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames, new_size):
+def run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames):
     angles = range(0, 360, angle_shift)
     filters = []
     for i in angles:
@@ -67,30 +67,38 @@ def run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_fra
     ])
 
     frames = transforms(rec)
-    # here
-    frames[0].resize_(new_size)
-    # this leaves us with some 337 time steps.
-    frames.shape
-    plt.figure()
-    plt.imshow(frames[10, 0])
-    # now we feed the data to our network! Because my computer has little memory, I only feed 10 specific time steps
-    with torch.no_grad():
-        output = net(frames[batch_frames[0]:batch_frames[1]].float())
-    output.shape
-    # in the end we can plot the
+    torch.empty((2, 3), dtype=torch.int64)
+    #HERE   i frame ora sembrano avere la stessa dimensione pero' c'e' un crop strano dell'immagine, controlla
+    num_pyr = 5
+    for pyr in range(1, num_pyr+1):
+        res = (int((frames[10, 0].shape[0])/pyr), int((frames[10, 0].shape[1])/pyr))
+        count = 0
+        frames_ch = torch.empty(((batch_frames[1]-batch_frames[0]), 1, int((frames[10, 0].shape[0])/pyr), int((frames[10, 0].shape[1])/pyr)), dtype=torch.int64)
+        for frame in range(batch_frames[0], batch_frames[1]):
+            frames_ch[count] = frames[frame].resize_(1, int((frames[10, 0].shape[0])/pyr), int((frames[10, 0].shape[1])/pyr))
+            count+=1
+        # this leaves us with some 337 time steps.
+        print(res)
+        frames_ch.shape
+        plt.figure()
+        plt.imshow(frames_ch[9, 0])
+        # now we feed the data to our network! Because my computer has little memory, I only feed 10 specific time steps
+        with torch.no_grad():
+            output = net(frames_ch.float())
+        output.shape
+        # in the end we can plot the sal map
+        fig, axes = plt.subplots(2, 4, figsize=(10, 5))
+        for i in range(8):
+            if i < 4:
+                axes[0, i].set_title(f"{angles[i]} grad")
+                axes[0, i].imshow(output[0, i])
+            else:
+                axes[1, i-4].set_title(f"{angles[i]} grad")
+                axes[1, i-4].imshow(output[0, i])
+        plt.show()
+        print('end')
 
 
-    fig, axes = plt.subplots(2, 4, figsize=(10, 5))
-
-    for i in range(8):
-        if i < 4:
-            axes[0, i].set_title(f"{angles[i]} grad")
-            axes[0, i].imshow(output[0, i])
-        else:
-            axes[1, i-4].set_title(f"{angles[i]} grad")
-            axes[1, i-4].imshow(output[0, i])
-    plt.show()
-    print('end')
 
 
 def raw_data(filePathOrName):
@@ -149,7 +157,6 @@ if __name__ == '__main__':
     time_wnd_frames = 20000 #us
     polarity = 0
     batch_frames = (100, 110)
-    new_size = (200, 300)
     ############################################
     ################ data ######################
     ############################################
@@ -161,16 +168,16 @@ if __name__ == '__main__':
     if RawDataFLAG:
         filePathOrName='/home/giuliadangelo/workspace/code/von-mises-filters/data/twoobjects.raw'
         rec = raw_data(filePathOrName)
-        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames, new_size)
+        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames)
 
     elif npy_dataFLAG:
         # load the recording and convert it to a structured numpy array
         filePathOrName = "/home/giuliadangelo/workspace/code/von-mises-filters/data/twoobjects.npy"
         rec = npy_data(filePathOrName)
-        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames, new_size)
+        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames)
 
 
     elif YarpDataFLAG:
         filePathOrName = '/home/giuliadangelo/workspace/data/DATASETs/IROS_attention/paddle/moving_paddle/ATIS/data'
         rec = yarp_data(filePathOrName)
-        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity,batch_frames, new_size)
+        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity,batch_frames)
