@@ -60,10 +60,14 @@ def run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_fra
     # We have to convert the raw events into frames so that we can feed those to our network
     # We use a library called tonic for that https://tonic.readthedocs.io/en/latest/ as well as torchvision
     # We use a 20ms (20000us) time window to bin events into frames and crop the center of the frame
+    # transforms = torchvision.transforms.Compose([
+    #     tonic.transforms.ToFrame(sensor_size=sensor_size, time_window=time_wnd_frames),
+    #     torch.tensor,
+    #     torchvision.transforms.CenterCrop((sensor_size[1]-1, sensor_size[0]-1)),
+    # ])
     transforms = torchvision.transforms.Compose([
         tonic.transforms.ToFrame(sensor_size=sensor_size, time_window=time_wnd_frames),
         torch.tensor,
-        torchvision.transforms.CenterCrop((sensor_size[1]-1, sensor_size[0]-1)),
     ])
 
     frames = transforms(rec)
@@ -136,12 +140,11 @@ def npy_data(filePathOrName):
     return rec
 
 
-def yarp_data(filePathOrName):
+def yarp_data(filePathOrName, camera_events, codec):
     events = importIitYarp(
         filePathOrName=filePathOrName,
-        codec='20bit')
+        codec=codec)
     # events = importIitYarp(filePathOrName='/Tesi/Datasets/icub_datasets/square/data')
-    camera_events = 'right'
 
     xs = events['data'][camera_events]['dvs']['x']
     ys = events['data'][camera_events]['dvs']['y']
@@ -159,19 +162,19 @@ if __name__ == '__main__':
 
 
     # load all the filters and stack them to a 3d array of (filter number, width, height)
-    fltr_resize_perc = [1,2,3,4]
+    fltr_resize_perc = [1.8, 1.9]
     angle_shift = 45
     time_wnd_frames = 20000 #us
     polarity = 0
     batch_frames = (100, 110)
-    num_pyr = 5
+    num_pyr = 6
     ############################################
     ################ data ######################
     ############################################
 
     RawDataFLAG = False
-    npy_dataFLAG = True
-    YarpDataFLAG = False
+    npy_dataFLAG = False
+    YarpDataFLAG = True
 
     show_imgs = False
 
@@ -182,7 +185,8 @@ if __name__ == '__main__':
 
     elif npy_dataFLAG:
         # load the recording and convert it to a structured numpy array
-        filePathOrName = "../data/twoobjects.npy"
+        # filePathOrName = "../data/twoobjects.npy"
+        filePathOrName = "../data/objclutter.npy"
         rec = npy_data(filePathOrName)
         fig, axes = plt.subplots(1, len(fltr_resize_perc))
         cnt = 0
@@ -195,8 +199,26 @@ if __name__ == '__main__':
         print('end')
 
     elif YarpDataFLAG:
-        filePathOrName = '/home/giuliadangelo/workspace/data/DATASETs/IROS_attention/paddle/moving_paddle/ATIS/data'
-        rec = yarp_data(filePathOrName)
-        [output, fltshape]=run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity,batch_frames, show_imgs,num_pyr)
+        # camera_events = 'right'
+        # codec = '24bit'
+        # filePathOrName = '/Users/giuliadangelo/workspace/data/DATASETs/attention-multiobjects/'
 
+        camera_events = 'right'
+        codec='20bit'
+        filePathOrName = '/home/giuliadangelo/workspace/data/DATASETs/IROS_attention/calibration/obj/ATIS/'
 
+        # camera_events = 'right'
+        # codec = '20bit'
+        # filePathOrName = '/Users/giuliadangelo/workspace/data/DATASETs/IROS_attention/calib_circles/calibration_circles/ATIS/'
+
+        rec = yarp_data(filePathOrName,camera_events,codec)
+        fig, axes = plt.subplots(1, len(fltr_resize_perc))
+        cnt = 0
+        for sizef in fltr_resize_perc:
+            [salmap, fltshape] = run(angle_shift, sizef, time_wnd_frames, rec, polarity, batch_frames, show_imgs,
+                                     num_pyr)
+            axes[cnt].set_title(f'VM filters size ({fltshape[0]},{fltshape[0]})')
+            axes[cnt].imshow(salmap[0, 0])
+            cnt += 1
+        plt.show()
+        print('end')
