@@ -12,33 +12,28 @@ from bimvee.importIitYarp import importIitYarp
 from bimvee.importProph import importProph
 from torchvision.transforms import InterpolationMode
 from skimage.transform import rescale, resize, downscale_local_mean
-from torchvision.transforms import Resize
 import cv2
-import torch.nn.functional as F
 
 
 
-def run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames):
+def run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames, show_imgs, num_pyr):
     angles = range(0, 360, angle_shift)
     filters = []
     for i in angles:
         filter = np.load(f"VMfilters/{i}_grad.npy")
         filter = rescale(filter, fltr_resize_perc, anti_aliasing=False)
         filters.append(filter)
+    #tensor with 8 orientation VM filter
     filters = torch.tensor(np.stack(filters).astype(np.float32))
+    print(f'VM filters size ({filter.shape[0]},{filter.shape[0]})')
+    if show_imgs:
+        #plt filters
+        fig, axes = plt.subplots(2, 4, figsize=(10, 5))
+        fig.suptitle(f'VM filters size ({filter.shape[0]},{filter.shape[0]})', fontsize=16)
 
-    #plt filters
-    fig, axes = plt.subplots(2, 4, figsize=(10, 5))
-    fig.suptitle(f'VM filters size ({filter.shape[0]},{filter.shape[0]})', fontsize=16)
-
-    #show filters
-    show_fltFLAG = False
-    show_input_image = False
-    shhow_partial_sal_map = True
-
-    if show_fltFLAG:
-        for i in range(len(angles)):
-            if i < (len(angles)/2):
+        #show filters
+        for i in range(8):
+            if i < 4:
                 axes[0, i].set_title(f"{angles[i]} grad")
                 axes[0, i].imshow(filters[i])
             else:
@@ -71,68 +66,46 @@ def run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_fra
         torchvision.transforms.CenterCrop((sensor_size[1]-1, sensor_size[0]-1)),
     ])
 
-    frames = transforms(rec).float()
-    torch.empty((2, 3), dtype=torch.int64)
-    num_pyr = 5
-    resolutions = [[0] * 2] * num_pyr
-    for pyr in range(0, num_pyr):
-        resolutions[pyr] = [int((frames[10, 0].shape[0]) / (pyr+1)), int((frames[10, 0].shape[1]) / (pyr+1))]
-    # num_pyr is the number of the scales I want my pyramid
-    sal_map= torch.empty((batch_frames[1]-batch_frames[0]), 1, resolutions[0][0], resolutions[0][1], dtype=torch.float32)
-    for scale in range(0, num_pyr):
-        res = resolutions[scale]
-        #creation empty tensor to collect frames of the same resolution, tensor or 337 matrixes (480,640)
-        #frames[336, 0]), tensor of 337 frames
-        #frames_ch, tensor containng the frames with the new resolution (batch_frame size, 1, camera width, camera hight)
-        count = 0
-        frames_ch = torch.empty(((batch_frames[1]-batch_frames[0]), 1, res[0], res[1]), dtype=torch.int64)
-        #running the model for multiple resolutions
-        for frame in range(batch_frames[0], batch_frames[1]):
-            frames_ch[count] = rescale_tensor(frames[frame].unsqueeze(0), res[0], res[1])
-            count+=1
+    frames = transforms(rec)
+    salmap=torch.empty((1, num_pyr, max_y, max_x), dtype=torch.int64)
+    for pyr in range(1, num_pyr+1):
+        print(f"pyramid scale {pyr}")
+        res = (int((frames[10, 0].shape[0])/pyr), int((frames[10, 0].shape[1])/pyr))
+        # count = 0
+        # frames_ch = torch.empty(((batch_frames[1]-batch_frames[0]), 1, res[0], res[1]), dtype=torch.int64)
+        prova = torchvision.transforms.Resize((res[0], res[1]))(frames)
+        frames_ch = prova[batch_frames[0]:batch_frames[1],:,:]
+
         # this leaves us with some 337 time steps.
         print(res)
         frames_ch.shape
-        if show_input_image:
+        if show_imgs:
             plt.figure()
             plt.imshow(frames_ch[9, 0])
         # now we feed the data to our network! Because my computer has little memory, I only feed 10 specific time steps
         with torch.no_grad():
             output = net(frames_ch.float())
         output.shape
-        sal_map_ori = torch.empty(output.shape[0], 1, output.shape[2],output.shape[3], dtype=torch.float32)
         # in the end we can plot the sal map
-        if shhow_partial_sal_map:
+        if show_imgs:
             fig, axes = plt.subplots(2, 4, figsize=(10, 5))
-            for i in range(len(angles)):
-                if i < (int(len(angles)/2)):
+            for i in range(8):
+                if i < 4:
                     axes[0, i].set_title(f"{angles[i]} grad")
                     axes[0, i].imshow(output[0, i])
                 else:
                     axes[1, i-4].set_title(f"{angles[i]} grad")
                     axes[1, i-4].imshow(output[0, i])
-                sal_map_ori += output[0, i]
             plt.show()
-            #understand the contribute of each orientation and scale, possible problem with scales
-            plt.figure()
-            plt.imshow(sal_map_ori[2, 0])
-            #here, fare la sal map generale delle scale quindi tornare indietro con lo squeeze
-            plt.title(f'scale: {scale}, partial sal map orientations', fontsize=16)
-            plt.show()
-            unsq_sal_map_ori = rescale_tensor(sal_map_ori, resolutions[0][0], resolutions[0][1])
-            sal_map += unsq_sal_map_ori
-            plt.figure()
-            plt.imshow(sal_map[2, 0])
-            plt.title(f'final sal map', fontsize=16)
-            plt.show()
-    print('end run')
+        #sum over different rotations
+        output_rotations = torch.sum(output, dim=1, keepdim=True)
+        #sum over batch frames
+        output_rotframes = torch.sum(output_rotations, dim=0, keepdim=True)
+        salmap[0,(pyr-1)] = torchvision.transforms.Resize((max_y, max_x))(output_rotframes[0])
+    salmap = torch.sum(salmap, dim=1, keepdim=True)
+    return salmap, filter.shape
 
-def rescale_tensor(inp, xout_size, yout_size):
-    x = torch.linspace(-1, 1, yout_size).repeat(xout_size, 1)
-    y = torch.linspace(-1, 1, xout_size).view(-1, 1).repeat(1, yout_size)
-    grid = torch.cat((x.unsqueeze(2), y.unsqueeze(2)), 2)
-    grid = grid.unsqueeze_(0).repeat(inp.shape[0], 1, 1, 1)
-    return F.grid_sample(inp, grid)
+
 
 
 def raw_data(filePathOrName):
@@ -186,11 +159,12 @@ if __name__ == '__main__':
 
 
     # load all the filters and stack them to a 3d array of (filter number, width, height)
-    fltr_resize_perc = 3
+    fltr_resize_perc = [1,2,3,4]
     angle_shift = 45
     time_wnd_frames = 20000 #us
     polarity = 0
-    batch_frames = (100, 110) #frames considered
+    batch_frames = (100, 110)
+    num_pyr = 5
     ############################################
     ################ data ######################
     ############################################
@@ -199,19 +173,30 @@ if __name__ == '__main__':
     npy_dataFLAG = True
     YarpDataFLAG = False
 
+    show_imgs = False
+
     if RawDataFLAG:
         filePathOrName='/home/giuliadangelo/workspace/code/von-mises-filters/data/twoobjects.raw'
         rec = raw_data(filePathOrName)
-        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames)
+        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames, show_imgs,num_pyr)
 
     elif npy_dataFLAG:
         # load the recording and convert it to a structured numpy array
-        filePathOrName = "/home/giuliadangelo/workspace/code/von-mises-filters/data/twoobjects.npy"
+        filePathOrName = "../data/twoobjects.npy"
         rec = npy_data(filePathOrName)
-        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity, batch_frames)
-
+        fig, axes = plt.subplots(1, len(fltr_resize_perc))
+        cnt = 0
+        for sizef in fltr_resize_perc:
+            [salmap, fltshape] = run(angle_shift, sizef, time_wnd_frames, rec, polarity, batch_frames,show_imgs,num_pyr)
+            axes[cnt].set_title(f'VM filters size ({fltshape[0]},{fltshape[0]})')
+            axes[cnt].imshow(salmap[0,0])
+            cnt+=1
+        plt.show()
+        print('end')
 
     elif YarpDataFLAG:
         filePathOrName = '/home/giuliadangelo/workspace/data/DATASETs/IROS_attention/paddle/moving_paddle/ATIS/data'
         rec = yarp_data(filePathOrName)
-        run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity,batch_frames)
+        [output, fltshape]=run(angle_shift, fltr_resize_perc, time_wnd_frames, rec, polarity,batch_frames, show_imgs,num_pyr)
+
+
